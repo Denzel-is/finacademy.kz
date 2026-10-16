@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {randomUUID} from 'node:crypto';
+const admins=JSON.parse(readFileSync('.local/admin-accounts.json','utf8'));
+let requests=0;
+function session(){let cookie='';return async(path,data,status=200,method)=>{requests++;const r=await fetch('https://finacademy.kz/api'+path,{method:method||(data?'POST':'GET'),headers:{...(data?{'Content-Type':'application/json'}:{}),...(cookie?{Cookie:cookie}:{})},body:data?JSON.stringify(data):undefined,signal:AbortSignal.timeout(20000)});const fresh=r.headers.get('set-cookie');if(fresh)cookie=fresh.split(';')[0];const value=await r.json();assert.equal(r.status,status,path+': '+JSON.stringify(value));return value;};}
+const admin=session(),secondAdmin=session(),student=session(),other=session();
+for(const [i,client]of[[0,admin],[1,secondAdmin]]){const result=await client('/auth/login',{login:admins[i].login,password:admins[i].password});assert.equal(result.user.role,'admin');assert.equal(result.user.name,admins[i].name);}
+const staff=await admin('/admin/administrators');assert.equal(staff.length,2);
+const tests=await admin('/admin/tests');
+for(const family of ['МСФО','МСФООС'])for(const language of ['RU','KZ']){const t=tests.find(t=>t.title===`Тесты ${family} 210 (${language})`);assert.ok(t);assert.equal(t.bank_count,200);assert.equal(t.question_count,25);}
+const tag=randomUUID().slice(0,8).split('').map(c=>String.fromCharCode(1040+parseInt(c,16))).join('');
+const payload={name:'Проверка потоков '+tag,text:`1: Проверка Потока Альфа${tag}\n2) Проверка Потока Бета${tag}`,request_id:randomUUID()};
+const preview=await admin('/admin/flows/preview',payload);assert.ok(preview.can_create);assert.ok(preview.rows.every(r=>r.status==='new'));
+const flow=await admin('/admin/flows',payload,201);
+const people=(await admin('/admin/students')).filter(s=>s.group_id===flow.id);assert.equal(people.length,2);
+writeFileSync('.local/flow-qa-state.json',JSON.stringify({flow_id:flow.id,users:people.map(s=>({id:s.id,login:s.login})),group_name:payload.name}));
+const first=flow.credentials[0],second=flow.credentials[1];
+const login=await student('/auth/login',{login:first.login.toUpperCase().replaceAll(' ','  '),password:'123456'});assert.equal(login.user.must_change_password,1);
+await student('/student/tests',undefined,403);await student('/auth/password',{current:'123456',password:'QA-flow-password-12'});
+await admin('/admin/flows',payload);const replay=session();await replay('/auth/login',{login:first.login,password:'QA-flow-password-12'});
+const test=tests.find(t=>t.title==='Тесты МСФООС 210 (RU)');
+const bank=await admin('/admin/questions?test_id='+test.id),key=Object.fromEntries(bank.map(q=>[q.id,q.correct_id]));
+await secondAdmin('/admin/assignments',{test_id:test.id,group_ids:[flow.id],minutes:2,max_attempts:3});
+assert.equal((await student('/student/tests')).find(t=>t.id===test.id).minutes,2);
+const a=await student('/student/start',{test_id:test.id},201);assert.equal(a.questions.length,25);assert.equal(Date.parse(a.deadline)-Date.parse(a.started_at),120000);assert.ok(!('answer_key_json'in a));
+const clientId=randomUUID();await student(`/student/attempts/${a.id}/lease`,{clientId,force:true});
+const answers=Object.fromEntries(a.questions.map(q=>[q.id,key[q.id]]));await student(`/student/attempts/${a.id}/save`,{clientId,version:1,answers});
+const recovered=await student(`/student/attempts/${a.id}`);assert.deepEqual(recovered.answers,answers);assert.deepEqual(recovered.questions,a.questions);
+const finished=await student(`/student/attempts/${a.id}/finish`,{clientId,version:2,answers});assert.equal(finished.percent,100);assert.equal(finished.passed,1);
+const now=Date.parse((await admin('/admin/active-count')).server_now);
+await secondAdmin('/admin/assignments',{test_id:test.id,group_ids:[flow.id],minutes:2,ends_at:new Date(now+5000).toISOString(),max_attempts:3});
+const short=await student('/student/start',{test_id:test.id},201);assert.ok(Date.parse(short.deadline)<=now+5000);
+const shortClient=randomUUID();await student(`/student/attempts/${short.id}/lease`,{clientId:shortClient,force:true});const q=short.questions[0];const before={[q.id]:key[q.id]};
+await student(`/student/attempts/${short.id}/save`,{clientId:shortClient,version:1,answers:before});
+await new Promise(resolve=>setTimeout(resolve,6000));
+const late=await student(`/student/attempts/${short.id}/save`,{clientId:shortClient,version:2,answers:{[q.id]:q.options.find(o=>o.id!==key[q.id]).id}});
+assert.equal(late.attempt.status,'expired');assert.deepEqual(late.attempt.answers,before);
+await other('/auth/login',{login:second.login,password:'123456'});
+await secondAdmin('/admin/students/reset-passwords',{ids:people.map(s=>s.id)});
+await student('/auth/me',undefined,401);await other('/auth/me',undefined,401);
+const reset=session();await reset('/auth/login',{login:first.login,password:'123456'});await reset('/student/tests',undefined,403);await reset('/auth/password',{current:'123456',password:'Reset-flow-password-12'});
+await admin('/admin/students/'+people.find(s=>s.login===first.login).id+'/reset-password',{});
+await reset('/auth/me',undefined,401);const afterSingle=session();assert.equal((await afterSingle('/auth/login',{login:first.login,password:'123456'})).user.must_change_password,1);
+writeFileSync('output/flows-functional.json',JSON.stringify({passed:true,at:new Date().toISOString(),requests,checks:['two equal administrators','four banks of 200 questions','numbered FIO flow','Unicode login normalization','mandatory password change','idempotent creation','per-flow duration','25 unique questions and private keys','save and recovery','100-point server grade','absolute deadline clamp','late answers rejected','bulk reset revokes both sessions','single reset returns to temporary password'],load_test_run:false},null,2));
+console.log(JSON.stringify({passed:true,requests,load_test_run:false,deadline_enforced:true}));

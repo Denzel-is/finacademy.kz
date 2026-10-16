@@ -1,0 +1,73 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {database} from './support.ts';
+import app from '../worker/index.ts';
+import {hashPassword} from '../worker/security.ts';
+import {normalizeLogin,parseStudentList} from '../shared/flows.ts';
+test('Numbered Cyrillic and Kazakh lists normalize without changing names',()=>{
+  const rows=parseStudentList('1: Иванова Анна Сергеевна\r\n\n2) Әбілова Айдана Ерланқызы\n№ 3. Петров Иван\n4 Сидоров Пётр');
+  assert.equal(rows.length,4);assert.ok(rows.every(r=>!r.error));assert.equal(rows[1].name,'Әбілова Айдана Ерланқызы');assert.equal(rows[3].name,'Сидоров Пётр');
+  assert.equal(normalizeLogin('  ӘБІЛОВА   Айдана '),'әбілова айдана');assert.ok(parseStudentList('1: Неполное')[0].error);
+});
+test('Flows, compulsory password changes, bulk resets, assignment deadlines and admission limit',async()=>{
+  const {sql,db}=database(),time=new Date().toISOString();
+  const pass=await hashPassword('Admin-password-12');
+  for(const id of ['dana','lyazzat'])sql.prepare("INSERT INTO users(id,name,login,login_key,password_hash,role,created_at) VALUES(?,?,?,?,?,'admin',?)").run(id,id,id,id,pass,time);
+  const env:any={DB:db,APP_NAME:'QA',ASSETS:{fetch:()=>new Response('font')}};
+  async function call(path:string,data?:any,cookie='',status=200,method?:string){const r=await app.fetch(new Request('https://qa.local/api'+path,{method:method||(data?'POST':'GET'),headers:{...(data?{'Content-Type':'application/json'}:{}),...(cookie?{Cookie:cookie}:{})},body:data?JSON.stringify(data):undefined}),env);const value:any=await r.json();assert.equal(r.status,status,path+': '+JSON.stringify(value));return {value,cookie:r.headers.get('set-cookie')?.split(';')[0]||cookie};}
+  const admin=(await call('/auth/login',{login:'dana',password:'Admin-password-12'})).cookie;
+  const otherAdmin=(await call('/auth/login',{login:'lyazzat',password:'Admin-password-12'})).cookie;
+  assert.equal((await call('/admin/administrators',undefined,otherAdmin)).value.length,2);
+  const input={name:'Поток проверки',text:'1: Иванова Анна Сергеевна\n2) Әбілова Айдана Ерланқызы',request_id:crypto.randomUUID()};
+  const duplicate=await call('/admin/flows/preview',{...input,text:'1. Иванова Анна\n2. иванова   анна'},admin);assert.equal(duplicate.value.can_create,false);
+  const excess=await call('/admin/flows/preview',{...input,text:Array.from({length:51},(_,i)=>`Проверка Студент${String.fromCharCode(1040+i)}`).join('\n')},admin);assert.equal(excess.value.can_create,false);assert.match(excess.value.errors.join(' '),/50/);
+  await call('/admin/flows',{...input,text:'1. Ошибка'},admin,400);assert.equal(sql.prepare('SELECT count(*) AS n FROM groups').get()!.n,0);
+  const flow=(await call('/admin/flows',input,admin,201)).value;
+  assert.equal(flow.credentials.length,2);assert.equal(flow.credentials[0].login,'Иванова Анна Сергеевна');
+  const first=flow.credentials[0],second=flow.credentials[1];
+  assert.equal(first.password.length,16);assert.notEqual(first.password,second.password);
+  const hashesBefore=sql.prepare("SELECT login,password_hash FROM users WHERE role='student' ORDER BY login").all();
+  const replay=(await call('/admin/flows',input,admin)).value;
+  assert.equal(replay.credentials_available,false);assert.ok(replay.credentials.every((credential:any)=>credential.password==='Не выдаётся повторно; сбросьте пароль'));
+  assert.deepEqual(sql.prepare("SELECT login,password_hash FROM users WHERE role='student' ORDER BY login").all(),hashesBefore,'replay never rotates a password or stores a plaintext receipt');
+  const student=(await call('/auth/login',{login:'  ИВАНОВА   Анна Сергеевна ',password:first.password})).cookie;
+  await call('/student/tests',undefined,student,403);
+  await call('/auth/password',{current:'wrong',password:'New-password-12'},student,400);
+  await call('/auth/password',{current:first.password,password:'New-password-12'},student);
+  await call('/student/tests',undefined,student);
+  await call('/admin/flows',input,admin);
+  await call('/auth/login',{login:first.login,password:'New-password-12'});
+  assert.equal(sql.prepare('SELECT count(*) AS n FROM groups').get()!.n,1);
+  const defaults={title:'Проверка времени',discipline:'QA',description:'',question_count:1,pass_percent:50,minutes:60,max_attempts:3,published:0,proctor_mode:'warn',proctor_limit:3,fullscreen:0,show_result:1,show_history:1};
+  const testId=(await call('/admin/tests',defaults,admin,201)).value.id;
+  await call('/admin/questions',{test_id:testId,text:'Проверочный вопрос',options:[{id:'A',text:'Да'},{id:'B',text:'Нет'}],correct_id:'A'},admin,201);
+  await call('/admin/tests/'+testId,{...defaults,published:1},admin,200,'PUT');
+  await call('/admin/assignments',{test_id:testId,group_ids:[flow.id],minutes:2,max_attempts:3},otherAdmin);
+  const tests=(await call('/student/tests',undefined,student)).value;assert.equal(tests[0].minutes,2);
+  const attempt=(await call('/student/start',{test_id:testId},student,201)).value;assert.equal(Date.parse(attempt.deadline)-Date.parse(attempt.started_at),120000);
+  const clientId=crypto.randomUUID();await call(`/student/attempts/${attempt.id}/lease`,{clientId,force:true},student);
+  const q=attempt.questions[0];await call(`/student/attempts/${attempt.id}/save`,{clientId,version:1,answers:{[q.id]:'A'}},student);
+  sql.prepare('UPDATE attempts SET deadline=? WHERE id=?').run(new Date(Date.now()-1).toISOString(),attempt.id);
+  const late=(await call(`/student/attempts/${attempt.id}/save`,{clientId,version:2,answers:{[q.id]:'B'}},student)).value;
+  assert.equal(late.attempt.status,'expired');assert.equal(late.attempt.answers[q.id],'A');assert.equal(late.attempt.percent,100);
+  const students=(await call('/admin/students',undefined,admin)).value;
+  const ids=students.map((s:any)=>s.id);
+  await call('/admin/students/reset-passwords',{ids:[ids[0],'dana']},admin,400);
+  const resetCredentials=(await call('/admin/students/reset-passwords',{ids},otherAdmin)).value.credentials;
+  assert.equal(new Set(resetCredentials.map((credential:any)=>credential.password)).size,ids.length);
+  const firstReset=resetCredentials.find((credential:any)=>credential.login===first.login),secondReset=resetCredentials.find((credential:any)=>credential.login===second.login);
+  await call('/auth/me',undefined,student,401);
+  const reset=(await call('/auth/login',{login:first.login,password:firstReset.password})).cookie;await call('/student/tests',undefined,reset,403);
+  await call('/auth/password',{current:firstReset.password,password:'Reset-password-12'},reset);
+  const singleReset=(await call('/admin/students/'+firstReset.id+'/reset-password',{},admin)).value;
+  assert.notEqual(singleReset.password,firstReset.password);assert.equal(singleReset.password.length,16);
+  const secondLogin=await call('/auth/login',{login:second.login,password:secondReset.password});await call('/auth/password',{current:secondReset.password,password:'Second-password-12'},secondLogin.cookie);
+  // Fifty database fixtures test the boundary; no fifty-session load is run.
+  for(let i=0;i<50;i++){
+    sql.prepare("INSERT INTO users(id,name,login,login_key,password_hash,role,created_at) VALUES(?,?,?,?,?,'student',?)").run('capacity'+i,'fixture','fixture'+i,'fixture'+i,pass,time);
+    sql.prepare("INSERT INTO attempts SELECT ?,?,test_id,assignment_id,test_title,student_name,group_name,'active',started_at,NULL,NULL,pass_percent,question_snapshot_json,answer_key_json,answers_json,version,NULL,NULL,NULL,proctor_mode,proctor_limit,fullscreen,show_result,show_history,proctor_epoch,violation_count,NULL,0,group_id_snapshot FROM attempts WHERE id=?").run('cap'+i,'capacity'+i,attempt.id);
+  }
+  await call('/student/start',{test_id:testId},secondLogin.cookie,429);
+  sql.prepare("UPDATE attempts SET deadline=? WHERE id='cap0'").run(new Date(Date.now()-1).toISOString());
+  await call('/student/start',{test_id:testId},secondLogin.cookie,201);
+});

@@ -1,0 +1,51 @@
+.flow-assignment-wizard > .form-body { display: grid; gap: 20px; }
+.flow-assignment-wizard > .form-body > p,
+.flow-assignment-wizard .notice,
+.flow-assignment-wizard .field { margin: 0; }
+.flow-assignment-wizard .flow-assignment-success { color: #176b53; }
+.flow-assignment-wizard .flow-wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  color: #6c7d73;
+  font-size: 13px;
+}
+.flow-wizard-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.flow-wizard-steps .complete,
+.flow-assignment-success,
+.flow-assignment-saved {
+  color: #176b53;
+}
+.flow-wizard-steps .current { color: #243c30; font-weight: 600; }
+.flow-assignment-wizard fieldset { padding: 0; }
+.flow-assignment-wizard .flow-wizard-heading { margin: 0; font-size: 17px; }
+.flow-assignment-wizard legend { margin: 0 0 12px; font-weight: 600; }
+.flow-test-choices { display: grid; gap: 10px; }
+.flow-test-choice { border: 1px solid #dde6df; border-radius: 10px; background: #fff; }
+.flow-test-choice.selected { border-color: #a0c4af; background: #f9fcfa; }
+.flow-test-choice-heading { display: flex; align-items: flex-start; gap: 12px; padding: 16px; cursor: pointer; }
+.flow-test-choice-heading > input { margin: 4px 0 0; flex: 0 0 auto; }
+.flow-test-choice-heading > span:first-of-type { display: grid; gap: 4px; }
+.flow-test-choice-heading small { color: #6c7d73; font-size: 12px; }
+.flow-assignment-saved { display: flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; white-space: nowrap; }
+.flow-test-choice-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 16px 16px 44px; }
+.flow-test-choice-settings > p { grid-column: 1 / -1; margin: 0; }
+.flow-test-choice-settings .field > span { font-size: 12px; }
+.flow-access-table { border-top: 1px solid #e0e8e2; padding-top: 20px; }
+.flow-access-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.flow-access-heading h3 { margin: 0; }
+.flow-access-table summary { cursor: pointer; color: #176b53; font-weight: 500; margin-bottom: 12px; }
+.flow-assignment-wizard .form-error { color: #b84e3c; margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .flow-test-choice-heading { flex-wrap: wrap; }
+  .flow-test-choice-heading > span:first-of-type { flex: 1; min-width: 180px; }
+  .flow-assignment-saved { margin-left: 26px; }
+  .flow-test-choice-settings { grid-template-columns: 1fr; padding-left: 16px; }
+}

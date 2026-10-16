@@ -1,0 +1,54 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "finance-academy-load",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-12",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "STUDENTS",
+        "class_name": "Student"
+      },
+      {
+        "name": "MONITOR",
+        "class_name": "Monitor"
+      },
+      {
+        "name": "COORDINATOR",
+        "class_name": "Coordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Student",
+        "Monitor"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "Coordinator"
+      ]
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "LOAD_REPORTS",
+      "id": "7f602ca5e3564bccbb07b71bd24981d9"
+    }
+  ],
+  "triggers": {
+    "crons": []
+  },
+  "vars": {
+    "LOAD_PAUSED": "1",
+    "BASE": "https://finance-academy.borodinda.workers.dev",
+    "TEST_ID": "fd08987b-56d6-412b-b0a8-0f04bf984f80"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

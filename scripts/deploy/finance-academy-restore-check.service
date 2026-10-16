@@ -1,0 +1,14 @@
+[Unit]
+Description=Verify FinanceAcademy PostgreSQL backup in a disposable database
+After=postgresql.service
+Requires=postgresql.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/finance-academy-restore-check
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true

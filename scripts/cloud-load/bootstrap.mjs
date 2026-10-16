@@ -1,0 +1,17 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+const fixture = JSON.parse(readFileSync(".local/load-hour-fixture.json", "utf8"));
+const access = JSON.parse(readFileSync(".local/seed-state.json", "utf8"));
+const secrets = JSON.parse(readFileSync(".local/cloud-load-secrets.json", "utf8"));
+const smoke = process.argv.includes("--smoke");
+const runId = `cloud-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0,8)}`;
+const config = { runId, duration: smoke ? 60000 : 3600000, count: smoke ? 1 : 300, bankCount: fixture.bank_count };
+secrets.ADMIN_PASSWORD = access.adminPassword;
+secrets.BOOTSTRAP_CONFIG = JSON.stringify(config);
+for (let i = 0; i < 6; i++) secrets[`LOAD_USERS_${i}`] = JSON.stringify(fixture.users.slice(i * 50, i * 50 + 50).map(({ login, password }) => ({ login, password })));
+const keys = Object.entries(fixture.answer_key);
+for (let i = 0; i < 2; i++) secrets[`ANSWER_KEY_${i}`] = JSON.stringify(Object.fromEntries(keys.slice(i * 100, i * 100 + 100)));
+for (const [name, value] of Object.entries(secrets)) if (Buffer.byteLength(value) > 5000) throw new Error(`Secret ${name} exceeds size budget`);
+writeFileSync(".local/cloud-bootstrap-secrets.json", JSON.stringify(secrets));
+writeFileSync(".local/cloud-bootstrap-state.json", JSON.stringify(config, null, 2));
+console.log(JSON.stringify(config));

@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "finance-academy",
+  "main": "worker/cloudflare.ts",
+  "compatibility_date": "2026-10-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "placement": { "region": "aws:eu-central-1" },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/*"],
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "finance-academy",
+      "database_id": "2a19ddac-fda6-4f8d-959f-9c2911c4066a",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "observability": { "enabled": true },
+  "vars": { "APP_NAME": "Академия финансов", "APP_TIMEZONE": "Asia/Almaty", "MIGRATION_TARGET": "https://finacademy.kz", "MIGRATION_MODE": "redirect" },
+}
